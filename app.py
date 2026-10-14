@@ -170,6 +170,32 @@ def upload():
     
     return jsonify({'songs': songs, 'count': len(songs)})
 
+@app.route('/yt_search', methods=['POST', 'OPTIONS'])
+def yt_search():
+    """Search YouTube via yt-dlp (server-side, reliable)"""
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+    
+    data = request.json
+    artist = data.get('artist', '').strip()
+    title = data.get('title', '').strip()
+    result = search_youtube(artist, title)
+    # Normalize to browser format
+    out = {
+        'videoId': result.get('video_id', ''),
+        'title': result.get('title', ''),
+        'url': result.get('url', ''),
+        'thumb': result.get('thumbnail', ''),
+        'duration': result.get('duration', '')
+    }
+    resp = jsonify(out)
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
 @app.route('/fetch_url', methods=['POST', 'OPTIONS'])
 def fetch_url():
     """Fetch Apple Music playlist from URL (server-side, no CORS issues)"""
