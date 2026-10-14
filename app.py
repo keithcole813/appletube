@@ -9,6 +9,7 @@ import json
 import zipfile
 import tempfile
 import subprocess
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from flask import Flask, request, jsonify, render_template, send_file
@@ -168,6 +169,45 @@ def upload():
         song['id'] = i
     
     return jsonify({'songs': songs, 'count': len(songs)})
+
+@app.route('/fetch_url', methods=['POST'])
+def fetch_url():
+    """Fetch Apple Music playlist from URL (server-side, no CORS issues)"""
+    data = request.json
+    url = data.get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+    
+    try:
+        # Fetch Apple Music page server-side
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+        
+        # Parse tracks: "artistName":"...",...,"name":"..."
+        songs = []
+        seen = set()
+        pat = re.compile(r'"artistName"\s*:\s*"([^"]+)"[\s\S]{0,500}?"name"\s*:\s*"([^"]+)"')
+        for m in pat.finditer(html):
+            artist, title = m.group(1), m.group(2)
+            if len(title) > 100:
+                continue
+            key = artist + '|' + title
+            if key not in seen:
+                seen.add(key)
+                songs.append({'artist': artist, 'title': title})
+        
+        if not songs:
+            return jsonify({'error': 'No tracks found in playlist'}), 404
+        
+        for i, song in enumerate(songs):
+            song['id'] = i
+        
+        return jsonify({'songs': songs, 'count': len(songs)})
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch playlist: {str(e)}'}), 500
 
 @app.route('/search', methods=['POST'])
 def search():

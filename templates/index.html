@@ -50,6 +50,11 @@
     <input type="file" id="fileInput" accept=".txt,.m3u,.m3u8,.xml,.plist">
   </div>
 
+  <div style="display:flex;gap:0.6rem;margin-bottom:1.5rem">
+    <input type="url" id="urlInput" placeholder="Or paste Apple Music playlist link…" style="flex:1;background:#141b2e;border:1px solid #26314d;border-radius:10px;padding:0.8rem 1rem;color:#f1f5f9;font-size:0.95rem;outline:none">
+    <button class="btn" id="loadUrlBtn" style="white-space:nowrap">Load</button>
+  </div>
+
   <div class="controls" id="controls" style="display:none">
     <button class="btn" id="searchAllBtn">🔍 Find YouTube Matches</button>
     <button class="btn" id="downloadZipBtn" disabled>📦 Download All as ZIP</button>
@@ -98,6 +103,31 @@ async function handleFile(file) {
     status.textContent = 'Upload failed: ' + e.message;
   }
 }
+
+document.getElementById('loadUrlBtn').addEventListener('click', async () => {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+  const btn = document.getElementById('loadUrlBtn');
+  btn.disabled = true; btn.textContent = 'Loading…';
+  status.textContent = 'Fetching playlist from Apple Music…';
+  try {
+    const res = await fetch('/fetch_url', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    const data = await res.json();
+    if (data.error) { status.textContent = data.error; return; }
+    songs = data.songs;
+    matches = {};
+    renderSongs();
+    controls.style.display = 'flex';
+    status.textContent = `${songs.length} songs loaded. Hit "Find YouTube Matches".`;
+  } catch (e) {
+    status.textContent = 'Failed: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Load';
+});
 
 function renderSongs() {
   songList.innerHTML = '';
