@@ -95,10 +95,15 @@ def search_youtube(artist, title):
     if query in search_cache:
         return search_cache[query]
     
+    # Use venv yt-dlp if available, else system
+    import sys
+    venv_ytdlp = str(Path(__file__).parent / 'venv' / 'bin' / 'yt-dlp')
+    ytdlp_bin = venv_ytdlp if Path(venv_ytdlp).exists() else 'yt-dlp'
+    
     try:
         # Use yt-dlp to search and get first result
         cmd = [
-            'yt-dlp',
+            ytdlp_bin,
             f'ytsearch1:{query}',
             '--print', '%(id)s|%(title)s|%(duration_string)s|%(thumbnail)s',
             '--no-playlist',
@@ -125,9 +130,11 @@ def search_youtube(artist, title):
 
 def download_audio(video_id, output_dir):
     """Download YouTube video as MP3"""
+    venv_ytdlp = str(Path(__file__).parent / 'venv' / 'bin' / 'yt-dlp')
+    ytdlp_bin = venv_ytdlp if Path(venv_ytdlp).exists() else 'yt-dlp'
     try:
         cmd = [
-            'yt-dlp',
+            ytdlp_bin,
             f'https://youtube.com/watch?v={video_id}',
             '-x', '--audio-format', 'mp3', '--audio-quality', '0',
             '-o', os.path.join(output_dir, '%(title)s.%(ext)s'),
