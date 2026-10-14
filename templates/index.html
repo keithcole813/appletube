@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AppleTube — Apple Playlist to YouTube MP3</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0b0f1a; color: #f1f5f9; padding: 1rem; max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+  h1 span { color: #f0cd6e; }
+  .sub { color: #94a3b8; margin-bottom: 1.5rem; }
+  .upload-zone { border: 2px dashed #334155; border-radius: 12px; padding: 2rem; text-align: center; margin-bottom: 1.5rem; cursor: pointer; transition: border-color 0.2s; }
+  .upload-zone:hover, .upload-zone.dragover { border-color: #f0cd6e; }
+  .upload-zone input { display: none; }
+  .formats { font-size: 0.8rem; color: #64748b; margin-top: 0.5rem; }
+  .controls { display: flex; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .btn { background: #f0cd6e; color: #0b0f1a; border: none; border-radius: 10px; padding: 0.8rem 1.4rem; font-weight: 700; font-size: 0.95rem; cursor: pointer; }
+  .btn:active { transform: scale(0.97); }
+  .btn-secondary { background: #1e293b; color: #f1f5f9; border: 1px solid #334155; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .song-list { display: flex; flex-direction: column; gap: 0.7rem; }
+  .song { background: #141b2e; border: 1px solid #26314d; border-radius: 12px; padding: 1rem; display: flex; gap: 1rem; align-items: center; }
+  .song.removed { opacity: 0.4; }
+  .song-info { flex: 1; min-width: 0; }
+  .song-title { font-weight: 700; margin-bottom: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song-artist { color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.4rem; }
+  .yt-match { font-size: 0.85rem; color: #64748b; }
+  .yt-match a { color: #38bdf8; text-decoration: none; }
+  .yt-match.found { color: #4ade80; }
+  .song-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+  .icon-btn { background: #1e293b; border: 1px solid #334155; border-radius: 8px; width: 40px; height: 40px; font-size: 1.1rem; cursor: pointer; color: #f1f5f9; }
+  .icon-btn:active { background: #26314d; }
+  .icon-btn.remove { color: #f87171; }
+  .icon-btn.download { color: #4ade80; }
+  .status { text-align: center; color: #94a3b8; padding: 2rem; }
+  .progress { background: #1e293b; border-radius: 8px; height: 8px; margin: 1rem 0; overflow: hidden; }
+  .progress-bar { background: #f0cd6e; height: 100%; width: 0%; transition: width 0.3s; }
+  .thumb { width: 60px; height: 45px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+</style>
+</head>
+<body>
+  <h1>🍎📺 <span>AppleTube</span></h1>
+  <p class="sub">Upload an Apple playlist → get YouTube matches → download MP3s</p>
+
+  <div class="upload-zone" id="uploadZone">
+    <div style="font-size:2rem;margin-bottom:0.5rem">📁</div>
+    <div>Drop playlist file here or tap to browse</div>
+    <div class="formats">Supports .txt, .m3u, .xml (iTunes export)</div>
+    <input type="file" id="fileInput" accept=".txt,.m3u,.m3u8,.xml,.plist">
+  </div>
+
+  <div class="controls" id="controls" style="display:none">
+    <button class="btn" id="searchAllBtn">🔍 Find YouTube Matches</button>
+    <button class="btn" id="downloadZipBtn" disabled>📦 Download All as ZIP</button>
+  </div>
+  <div class="progress" id="progressWrap" style="display:none"><div class="progress-bar" id="progressBar"></div></div>
+
+  <div class="song-list" id="songList"></div>
+  <div class="status" id="status">Upload a playlist to get started</div>
+
+<script>
+let songs = [];
+let matches = {}; // song_id -> youtube info
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const songList = document.getElementById('songList');
+const status = document.getElementById('status');
+const controls = document.getElementById('controls');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+async function handleFile(file) {
+  status.textContent = 'Parsing playlist...';
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) { status.textContent = data.error; return; }
+    songs = data.songs;
+    matches = {};
+    renderSongs();
+    controls.style.display = 'flex';
+    status.textContent = `${songs.length} songs loaded. Hit "Find YouTube Matches".`;
+  } catch (e) {
+    status.textContent = 'Upload failed: ' + e.message;
+  }
+}
+
+function renderSongs() {
+  songList.innerHTML = '';
+  songs.filter(s => !s.removed).forEach(song => {
+    const m = matches[song.id];
+    const div = document.createElement('div');
+    div.className = 'song';
+    div.innerHTML = `
+      ${m && m.thumbnail ? `<img class="thumb" src="${m.thumbnail}" alt="">` : ''}
+      <div class="song-info">
+        <div class="song-title">${esc(song.title)}</div>
+        <div class="song-artist">${esc(song.artist)}</div>
+        <div class="yt-match ${m && m.video_id ? 'found' : ''}">
+          ${m ? (m.video_id ? `✓ <a href="${m.url}" target="_blank">${esc(m.title)}</a> ${m.duration ? '('+m.duration+')' : ''}` : '✗ ' + esc(m.title)) : '—'}
+        </div>
+      </div>
+      <div class="song-actions">
+        ${m && m.video_id ? `<button class="icon-btn download" onclick="downloadOne('${m.video_id}')" title="Download MP3">⬇</button>` : ''}
+        <button class="icon-btn remove" onclick="removeSong(${song.id})" title="Remove">✕</button>
+      </div>
+    `;
+    songList.appendChild(div);
+  });
+  updateZipButton();
+}
+
+function esc(s) { return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function removeSong(id) {
+  const song = songs.find(s => s.id === id);
+  if (song) { song.removed = true; delete matches[id]; renderSongs(); }
+}
+
+function updateZipButton() {
+  const btn = document.getElementById('downloadZipBtn');
+  const count = Object.keys(matches).filter(id => matches[id].video_id && !songs.find(s => s.id == id)?.removed).length;
+  btn.disabled = count === 0;
+  btn.textContent = `📦 Download All as ZIP (${count})`;
+}
+
+document.getElementById('searchAllBtn').addEventListener('click', async () => {
+  const active = songs.filter(s => !s.removed);
+  if (!active.length) return;
+  const btn = document.getElementById('searchAllBtn');
+  btn.disabled = true;
+  btn.textContent = '🔍 Searching...';
+  document.getElementById('progressWrap').style.display = 'block';
+  
+  // Search in batches to avoid overwhelming
+  for (let i = 0; i < active.length; i++) {
+    const song = active[i];
+    try {
+      const res = await fetch('/search', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({artist: song.artist, title: song.title})
+      });
+      const m = await res.json();
+      matches[song.id] = m;
+    } catch (e) { matches[song.id] = {video_id: '', title: 'Error'}; }
+    const pct = Math.round(((i+1) / active.length) * 100);
+    document.getElementById('progressBar').style.width = pct + '%';
+    renderSongs();
+  }
+  
+  btn.disabled = false;
+  btn.textContent = '🔍 Find YouTube Matches';
+  document.getElementById('progressWrap').style.display = 'none';
+  status.textContent = `Found matches for ${Object.values(matches).filter(m => m.video_id).length} of ${active.length} songs.`;
+});
+
+function downloadOne(videoId) {
+  window.location.href = '/download/' + videoId;
+}
+
+document.getElementById('downloadZipBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('downloadZipBtn');
+  const vids = Object.entries(matches)
+    .filter(([id, m]) => m.video_id && !songs.find(s => s.id == id)?.removed)
+    .map(([id, m]) => m.video_id);
+  if (!vids.length) return;
+  btn.disabled = true;
+  btn.textContent = '📦 Preparing ZIP... (this takes a while)';
+  try {
+    const res = await fetch('/download_zip', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({video_ids: vids})
+    });
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'appletube_playlist.zip';
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      alert('ZIP download failed');
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+  btn.disabled = false;
+  updateZipButton();
+});
+</script>
+</body>
+</html>
