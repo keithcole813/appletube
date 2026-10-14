@@ -170,13 +170,23 @@ def upload():
     
     return jsonify({'songs': songs, 'count': len(songs)})
 
-@app.route('/fetch_url', methods=['POST'])
+@app.route('/fetch_url', methods=['POST', 'OPTIONS'])
 def fetch_url():
     """Fetch Apple Music playlist from URL (server-side, no CORS issues)"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+    
     data = request.json
     url = data.get('url', '').strip()
     if not url:
-        return jsonify({'error': 'No URL provided'}), 400
+        resp = jsonify({'error': 'No URL provided'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 400
     
     try:
         # Fetch Apple Music page server-side
@@ -200,14 +210,20 @@ def fetch_url():
                 songs.append({'artist': artist, 'title': title})
         
         if not songs:
-            return jsonify({'error': 'No tracks found in playlist'}), 404
+            resp = jsonify({'error': 'No tracks found in playlist'})
+            resp.headers['Access-Control-Allow-Origin'] = '*'
+            return resp, 404
         
         for i, song in enumerate(songs):
             song['id'] = i
         
-        return jsonify({'songs': songs, 'count': len(songs)})
+        resp = jsonify({'songs': songs, 'count': len(songs)})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
     except Exception as e:
-        return jsonify({'error': f'Failed to fetch playlist: {str(e)}'}), 500
+        resp = jsonify({'error': f'Failed to fetch playlist: {str(e)}'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 500
 
 @app.route('/search', methods=['POST'])
 def search():
