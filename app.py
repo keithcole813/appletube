@@ -177,6 +177,38 @@ def upload():
     
     return jsonify({'songs': songs, 'count': len(songs)})
 
+@app.route('/yt_search_batch', methods=['POST', 'OPTIONS'])
+def yt_search_batch():
+    """Batch YouTube search - parallel yt-dlp for speed"""
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+    
+    from concurrent.futures import ThreadPoolExecutor
+    data = request.json
+    songs = data.get('songs', [])  # [{artist, title, id}]
+    
+    def search_one(song):
+        result = search_youtube(song.get('artist',''), song.get('title',''))
+        return {
+            'id': song.get('id'),
+            'videoId': result.get('video_id',''),
+            'title': result.get('title',''),
+            'url': result.get('url',''),
+            'thumb': result.get('thumbnail',''),
+            'duration': result.get('duration','')
+        }
+    
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(search_one, songs))
+    
+    resp = jsonify({'results': results})
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
 @app.route('/yt_search', methods=['POST', 'OPTIONS'])
 def yt_search():
     """Search YouTube via yt-dlp (server-side, reliable)"""
