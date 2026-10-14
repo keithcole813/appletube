@@ -321,14 +321,22 @@ def download_single(video_id):
                 return send_file(str(files[0]), as_attachment=True, download_name=files[0].name)
     return jsonify({'error': 'Download failed'}), 500
 
-@app.route('/download_zip', methods=['POST'])
+@app.route('/download_zip', methods=['POST', 'OPTIONS'])
 def download_zip():
-    """Download multiple songs as ZIP"""
+    """Download multiple songs as ZIP (with CORS)"""
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
     data = request.json
     video_ids = data.get('video_ids', [])
     
     if not video_ids:
-        return jsonify({'error': 'No songs selected'}), 400
+        resp = jsonify({'error': 'No songs selected'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 400
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Download all
@@ -341,7 +349,78 @@ def download_zip():
             for mp3 in Path(tmpdir).glob('*.mp3'):
                 zf.write(mp3, mp3.name)
         
-        return send_file(zip_path, as_attachment=True, download_name='appletube_playlist.zip')
+        resp = send_file(zip_path, as_attachment=True, download_name='appletube_playlist.zip')
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+# Background ZIP jobs (for large playlists that would timeout)
+zip_jobs = {}
+
+@app.route('/zip_start', methods=['POST', 'OPTIONS'])
+def zip_start():
+    """Start background ZIP job, return job_id immediately"""
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return resp
+    import uuid, threading
+    data = request.json
+    video_ids = data.get('video_ids', [])
+    if not video_ids:
+        resp = jsonify({'error': 'No songs selected'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 400
+    
+    job_id = str(uuid.uuid4())[:8]
+    job_dir = tempfile.mkdtemp(prefix=f'appletube_{job_id}_')
+    zip_jobs[job_id] = {'status': 'starting', 'done': 0, 'total': len(video_ids), 'dir': job_dir, 'zip_path': None}
+    
+    def run():
+        job = zip_jobs[job_id]
+        job['status'] = 'downloading'
+        for vid in video_ids:
+            if job.get('cancelled'): break
+            download_audio(vid, job_dir)
+            job['done'] += 1
+        if not job.get('cancelled'):
+            job['status'] = 'zipping'
+            zip_path = os.path.join(job_dir, 'appletube_playlist.zip')
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for mp3 in Path(job_dir).glob('*.mp3'):
+                    zf.write(mp3, mp3.name)
+            job['zip_path'] = zip_path
+            job['status'] = 'done'
+    
+    threading.Thread(target=run, daemon=True).start()
+    resp = jsonify({'job_id': job_id, 'total': len(video_ids)})
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+@app.route('/zip_status/<job_id>', methods=['GET', 'OPTIONS'])
+def zip_status(job_id):
+    if request.method == 'OPTIONS':
+        resp = jsonify({})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
+    job = zip_jobs.get(job_id)
+    if not job:
+        resp = jsonify({'error': 'Job not found'})
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 404
+    resp = jsonify({'status': job['status'], 'done': job['done'], 'total': job['total']})
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
+
+@app.route('/zip_result/<job_id>', methods=['GET'])
+def zip_result(job_id):
+    job = zip_jobs.get(job_id)
+    if not job or job['status'] != 'done' or not job['zip_path']:
+        return jsonify({'error': 'Not ready'}), 404
+    resp = send_file(job['zip_path'], as_attachment=True, download_name='appletube_playlist.zip')
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5004, debug=False)
